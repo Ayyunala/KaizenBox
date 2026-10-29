@@ -156,7 +156,6 @@ Karyawan hanya melihat aspirasi miliknya. Admin dapat melihat semua aspirasi, te
 - Backend memverifikasi password dengan bcrypt. Password lama yang tersimpan sebagai teks biasa di-hash otomatis saat login berhasil. Gunakan hanya password sementara untuk pengujian lokal.
 - Token autentikasi disimpan di localStorage frontend agar sesi bertahan setelah refresh. Sesi backend disimpan di memori, sehingga pengguna perlu login kembali setelah backend dimulai ulang.
 - Token anonim saat ini berasal dari ID karyawan, sehingga bukan anonimitas penuh.
-- Audit log aktivitas sistem tidak digunakan. Perubahan status aspirasi tetap memiliki riwayat yang terkait dengan tiket.
 - Batas 10 aspirasi per hari ditegakkan backend dengan transaksi dan penguncian baris akun; frontend menampilkan nilai yang dikirim oleh API backend.
 - CORS masih terbuka untuk pengembangan lokal.
 
