@@ -20,19 +20,6 @@ const STATUS_TRANSITIONS = {
   Selesai: [],
 };
 
-const parseHistory = (value) => {
-  if (Array.isArray(value)) return value;
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
-};
-
 const isBcryptHash = (value) => typeof value === 'string' && /^\$2[aby]\$/.test(value);
 
 async function verifyPassword(inputPassword, storedPassword, idKaryawan) {
@@ -74,7 +61,7 @@ const normalizeUser = (row) => {
   };
 };
 
-const normalizeIde = (row) => ({
+const normalizeIde = (row, riwayatStatus = []) => ({
   id: row.id,
   tiket: row.tiket,
   tokenAnonim: row.token_anonim || `KTR-${row.external_id_karyawan || row.id_karyawan}`,
@@ -98,11 +85,39 @@ const normalizeIde = (row) => ({
   tanggalKeputusan: dateOnly(row.tanggal_keputusan),
   tanggalImplementasi: dateOnly(row.tanggal_implementasi),
   catatanHasil: row.catatan_hasil || '',
-  riwayatStatus: parseHistory(row.riwayat_status),
+  riwayatStatus,
   rekomendasi: row.rekomendasi || 'implementasi',
   reviewerToken: row.reviewer_token || undefined,
   pemutusToken: row.pemutus_token || undefined,
 });
+
+const normalizeHistoryRow = (row) => ({
+  statusLama: row.status_lama ?? '-',
+  statusBaru: row.status_baru,
+  tanggal: row.waktu instanceof Date ? row.waktu.toISOString() : new Date(row.waktu).toISOString(),
+  catatan: row.catatan || '',
+  ...(row.status_lama === null ? {} : { oleh: `KTR-${row.oleh_id_karyawan}` }),
+});
+
+async function getHistories(aspirasiIds, executor = db) {
+  const histories = new Map(aspirasiIds.map((id) => [id, []]));
+  if (!aspirasiIds.length) return histories;
+
+  const placeholders = aspirasiIds.map(() => '?').join(', ');
+  const [rows] = await executor.execute(`
+    SELECT r.aspirasi_id, r.status_lama, r.status_baru, r.catatan, r.waktu,
+      k.id_karyawan AS oleh_id_karyawan
+    FROM riwayat_status r
+    JOIN karyawan k ON k.id = r.oleh_id
+    WHERE r.aspirasi_id IN (${placeholders})
+    ORDER BY r.aspirasi_id ASC, r.id ASC
+  `, aspirasiIds);
+
+  for (const row of rows) {
+    histories.get(row.aspirasi_id).push(normalizeHistoryRow(row));
+  }
+  return histories;
+}
 
 dotenv.config();
 
@@ -123,7 +138,11 @@ app.use('/api', async (req, res, next) => {
 
   try {
     const [rows] = await db.execute(
-      'SELECT id, id_karyawan, nama_tampilan, bagian, jabatan, role, aktif, created_at FROM karyawan WHERE id_karyawan = ? AND aktif = 1 LIMIT 1',
+      `SELECT k.id, k.id_karyawan, k.nama_tampilan, k.bagian, k.jabatan,
+        IF(ad.karyawan_id IS NULL, 'karyawan', 'admin') AS role, k.aktif, k.created_at
+      FROM karyawan k
+      LEFT JOIN admin ad ON ad.karyawan_id = k.id
+      WHERE k.id_karyawan = ? AND k.aktif = 1 LIMIT 1`,
       [idKaryawan]
     );
     if (!rows.length) {
@@ -157,7 +176,11 @@ app.post('/api/login', async (req, res) => {
 
   try {
     const [rows] = await db.execute(
-      'SELECT * FROM karyawan WHERE id_karyawan = ? AND aktif = 1 LIMIT 1',
+      `SELECT k.id, k.id_karyawan, k.nama_tampilan, k.bagian, k.jabatan, k.password,
+        IF(ad.karyawan_id IS NULL, 'karyawan', 'admin') AS role, k.aktif, k.created_at
+      FROM karyawan k
+      LEFT JOIN admin ad ON ad.karyawan_id = k.id
+      WHERE k.id_karyawan = ? AND k.aktif = 1 LIMIT 1`,
       [idKaryawan]
     );
 
@@ -201,7 +224,13 @@ app.get('/api/karyawan', async (req, res) => {
   }
 
   try {
-    const [rows] = await db.execute('SELECT id, id_karyawan, nama_tampilan, bagian, jabatan, role, aktif, created_at FROM karyawan ORDER BY id ASC');
+    const [rows] = await db.execute(`
+      SELECT k.id, k.id_karyawan, k.nama_tampilan, k.bagian, k.jabatan,
+        IF(ad.karyawan_id IS NULL, 'karyawan', 'admin') AS role, k.aktif, k.created_at
+      FROM karyawan k
+      LEFT JOIN admin ad ON ad.karyawan_id = k.id
+      ORDER BY k.id ASC
+    `);
     return res.json({ success: true, data: rows.map(normalizeUser) });
   } catch (error) {
     console.error('Get karyawan error:', error);
@@ -221,23 +250,71 @@ app.put('/api/karyawan/:idKaryawan/roles', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Peran tidak valid.' });
   }
 
+  let connection;
+  let transactionStarted = false;
   try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    await connection.execute(`
+      SELECT k.id FROM admin ad
+      JOIN karyawan k ON k.id = ad.karyawan_id
+      WHERE k.aktif = 1
+      ORDER BY k.id ASC
+      FOR UPDATE
+    `);
+
     const role = peran.includes('admin') ? 'admin' : 'karyawan';
-    const [targetRows] = await db.execute('SELECT role FROM karyawan WHERE id_karyawan = ? LIMIT 1', [idKaryawan]);
+    const [targetRows] = await connection.execute(`
+      SELECT k.id, IF(ad.karyawan_id IS NULL, 'karyawan', 'admin') AS role
+      FROM karyawan k
+      LEFT JOIN admin ad ON ad.karyawan_id = k.id
+      WHERE k.id_karyawan = ? LIMIT 1
+      FOR UPDATE
+    `, [idKaryawan]);
     if (!targetRows.length) {
+      await connection.rollback();
+      transactionStarted = false;
       return res.status(404).json({ success: false, message: 'Karyawan tidak ditemukan.' });
     }
     if (targetRows[0].role === 'admin' && role !== 'admin') {
-      const [[adminCount]] = await db.execute("SELECT COUNT(*) AS jumlah FROM karyawan WHERE role = 'admin' AND aktif = 1");
+      const [[adminCount]] = await connection.execute(`
+        SELECT COUNT(*) AS jumlah FROM admin ad
+        JOIN karyawan k ON k.id = ad.karyawan_id
+        WHERE k.aktif = 1
+      `);
       if (adminCount.jumlah <= 1) {
+        await connection.rollback();
+        transactionStarted = false;
         return res.status(400).json({ success: false, message: 'Sistem harus memiliki minimal satu admin aktif.' });
       }
     }
-    await db.execute('UPDATE karyawan SET role = ? WHERE id_karyawan = ?', [role, idKaryawan]);
+    if (targetRows[0].role !== role) {
+      if (role === 'admin') {
+        await connection.execute(
+          'INSERT INTO admin (karyawan_id, ditunjuk_oleh) VALUES (?, ?)',
+          [targetRows[0].id, req.authUser.id]
+        );
+      } else {
+        await connection.execute('DELETE FROM admin WHERE karyawan_id = ?', [targetRows[0].id]);
+      }
+    }
+    await connection.commit();
+    transactionStarted = false;
     return res.json({ success: true, message: 'Role berhasil diperbarui.' });
   } catch (error) {
+    if (connection && transactionStarted) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error('Set role rollback error:', rollbackError);
+      }
+    }
     console.error('Set role error:', error);
     return res.status(500).json({ success: false, message: 'Gagal memperbarui role.' });
+  } finally {
+    connection?.release();
   }
 });
 
@@ -252,7 +329,11 @@ app.get('/api/aspirasi', async (req, res) => {
       ${ownOnly ? 'WHERE a.id_karyawan = ?' : ''}
       ORDER BY a.id DESC
     `, ownOnly ? [req.authUser.id] : []);
-    return res.json({ success: true, data: rows.map(normalizeIde) });
+    const histories = await getHistories(rows.map((row) => row.id));
+    return res.json({
+      success: true,
+      data: rows.map((row) => normalizeIde(row, histories.get(row.id))),
+    });
   } catch (error) {
     console.error('Get aspirasi error:', error);
     return res.status(500).json({ success: false, message: 'Gagal mengambil data aspirasi.' });
@@ -327,24 +408,23 @@ app.post('/api/aspirasi', async (req, res) => {
 
     const tiket = `KZ-${new Date().getFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
     const prioritas = kategori.trim() === 'Keselamatan Kerja' ? 'Mendesak' : 'Normal';
-    const riwayatStatus = [{
-      statusLama: '-',
-      statusBaru: 'Terkirim',
-      tanggal: new Date().toISOString(),
-      catatan: 'Aspirasi masuk antrean',
-    }];
-    await connection.execute(
+    const [insertResult] = await connection.execute(
       `INSERT INTO aspirasi (
         tiket, id_karyawan, bagian, jabatan, kategori, judul, masalah, solusi,
-        lokasi_akurate, di_luar_area, foto_data, status, prioritas, riwayat_status
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Terkirim', ?, ?)`,
+        lokasi_akurate, di_luar_area, foto_data, status, prioritas
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Terkirim', ?)`,
       [
         tiket, req.authUser.id, req.authUser.bagian, req.authUser.jabatan,
         kategori.trim(), judul.trim(), masalah.trim(), typeof solusi === 'string' ? solusi.trim() : '',
         lokasiAkurat.trim(), diLuarAreaProduksi ? 1 : 0,
         diLuarAreaProduksi && typeof fotoData === 'string' ? fotoData : '',
-        prioritas, JSON.stringify(riwayatStatus),
+        prioritas,
       ]
+    );
+    await connection.execute(
+      `INSERT INTO riwayat_status (aspirasi_id, status_lama, status_baru, catatan, oleh_id)
+       VALUES (?, NULL, 'Terkirim', 'Aspirasi masuk antrean', ?)`,
+      [insertResult.insertId, req.authUser.id]
     );
 
     const [rows] = await connection.execute(`
@@ -354,9 +434,14 @@ app.post('/api/aspirasi', async (req, res) => {
       LEFT JOIN karyawan k ON k.id = a.id_karyawan
       WHERE a.tiket = ? LIMIT 1
     `, [tiket]);
+    const histories = await getHistories([rows[0].id], connection);
     await connection.commit();
     transactionStarted = false;
-    return res.json({ success: true, message: 'Aspirasi berhasil dikirim.', data: normalizeIde(rows[0]) });
+    return res.json({
+      success: true,
+      message: 'Aspirasi berhasil dikirim.',
+      data: normalizeIde(rows[0], histories.get(rows[0].id)),
+    });
   } catch (error) {
     if (connection && transactionStarted) {
       try {
@@ -383,13 +468,27 @@ app.put('/api/aspirasi/:tiket', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Perubahan aspirasi tidak valid.' });
   }
 
+  let connection;
+  let transactionStarted = false;
   try {
-    const [currentRows] = await db.execute('SELECT * FROM aspirasi WHERE tiket = ? LIMIT 1', [tiket]);
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+
+    const [currentRows] = await connection.execute(`
+      SELECT a.*, k.id_karyawan AS external_id_karyawan
+      FROM aspirasi a
+      JOIN karyawan k ON k.id = a.id_karyawan
+      WHERE a.tiket = ? LIMIT 1
+      FOR UPDATE
+    `, [tiket]);
     if (!currentRows.length) {
       return res.status(404).json({ success: false, message: 'Aspirasi tidak ditemukan.' });
     }
 
     const current = currentRows[0];
+    const currentHistories = await getHistories([current.id], connection);
+    const currentHistory = currentHistories.get(current.id);
     const nextStatus = updates.status || current.status;
     if (updates.status && updates.status !== current.status
       && !STATUS_TRANSITIONS[current.status]?.includes(updates.status)) {
@@ -431,7 +530,7 @@ app.put('/api/aspirasi/:tiket', async (req, res) => {
       if (typeof requestedPicToken !== 'string' || !requestedPicToken) {
         return res.status(400).json({ success: false, message: 'Pilih karyawan aktif sebagai PIC.' });
       }
-      const [picRows] = await db.execute(
+      const [picRows] = await connection.execute(
         `SELECT id_karyawan, nama_tampilan FROM karyawan
          WHERE CONCAT('KTR-', id_karyawan) = ? AND aktif = 1
            AND jabatan IS NOT NULL AND TRIM(jabatan) <> ''
@@ -439,7 +538,7 @@ app.put('/api/aspirasi/:tiket', async (req, res) => {
          LIMIT 1`,
         [requestedPicToken]
       );
-      if (!picRows.length || requestedPicToken === `KTR-${current.id_karyawan}`) {
+      if (!picRows.length || requestedPicToken === `KTR-${current.external_id_karyawan}`) {
         return res.status(400).json({
           success: false,
           message: 'PIC harus karyawan aktif dengan jabatan selain Operator dan bukan pengirim aspirasi.',
@@ -504,52 +603,73 @@ app.put('/api/aspirasi/:tiket', async (req, res) => {
       values.push(reviewerToken);
     }
 
-    const history = parseHistory(current.riwayat_status);
     const requestedHistory = Array.isArray(updates.riwayatStatus) ? updates.riwayatStatus : [];
-    if (requestedHistory.length > history.length) {
+    let historyEntry = null;
+    if (requestedHistory.length > currentHistory.length) {
       const entry = requestedHistory[requestedHistory.length - 1];
       if (!entry || typeof entry.catatan !== 'string' || entry.statusBaru !== nextStatus) {
         return res.status(400).json({ success: false, message: 'Riwayat status tidak valid.' });
       }
-      history.push({
-        statusLama: current.status,
+      historyEntry = {
+        status_lama: current.status,
         statusBaru: nextStatus,
-        tanggal: new Date().toISOString(),
         catatan: entry.catatan,
-        oleh: reviewerToken,
-      });
+      };
     } else if (updates.status && updates.status !== current.status) {
-      history.push({
-        statusLama: current.status,
+      historyEntry = {
+        status_lama: current.status,
         statusBaru: nextStatus,
-        tanggal: new Date().toISOString(),
         catatan: `Status diubah menjadi ${nextStatus}`,
-        oleh: reviewerToken,
-      });
+      };
     }
-
-    if (history.length !== parseHistory(current.riwayat_status).length) {
-      setClauses.push('riwayat_status = ?');
-      values.push(JSON.stringify(history));
-    }
-    if (!setClauses.length) {
+    if (!setClauses.length && !historyEntry) {
       return res.status(400).json({ success: false, message: 'Tidak ada perubahan yang dapat disimpan.' });
     }
 
-    values.push(tiket);
-    await db.execute(`UPDATE aspirasi SET ${setClauses.join(', ')} WHERE tiket = ?`, values);
+    if (setClauses.length) {
+      await connection.execute(
+        `UPDATE aspirasi SET ${setClauses.join(', ')} WHERE tiket = ?`,
+        [...values, tiket]
+      );
+    }
 
-    const [rows] = await db.execute(`
+    if (historyEntry) {
+      await connection.execute(
+        `INSERT INTO riwayat_status (aspirasi_id, status_lama, status_baru, catatan, oleh_id)
+         VALUES (?, ?, ?, ?, ?)`,
+        [current.id, historyEntry.status_lama, historyEntry.statusBaru, historyEntry.catatan, req.authUser.id]
+      );
+    }
+
+    const [rows] = await connection.execute(`
       SELECT a.*, k.id_karyawan AS external_id_karyawan,
         k.bagian AS employee_bagian, k.jabatan AS employee_jabatan
       FROM aspirasi a
       LEFT JOIN karyawan k ON k.id = a.id_karyawan
       WHERE a.tiket = ? LIMIT 1
     `, [tiket]);
-    return res.json({ success: true, message: 'Aspirasi berhasil diperbarui.', data: normalizeIde(rows[0]) });
+    const histories = await getHistories([rows[0].id], connection);
+    await connection.commit();
+    transactionStarted = false;
+    return res.json({
+      success: true,
+      message: 'Aspirasi berhasil diperbarui.',
+      data: normalizeIde(rows[0], histories.get(rows[0].id)),
+    });
   } catch (error) {
     console.error('Update aspirasi error:', error);
     return res.status(500).json({ success: false, message: 'Gagal memperbarui aspirasi.' });
+  } finally {
+    if (connection) {
+      if (transactionStarted) {
+        try {
+          await connection.rollback();
+        } catch (rollbackError) {
+          console.error('Update aspirasi rollback error:', rollbackError);
+        }
+      }
+      connection.release();
+    }
   }
 });
 
@@ -568,7 +688,11 @@ app.get('/api/aspirasi/:tiket', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Aspirasi tidak ditemukan.' });
     }
 
-    return res.json({ success: true, data: normalizeIde(rows[0]) });
+    const histories = await getHistories([rows[0].id]);
+    return res.json({
+      success: true,
+      data: normalizeIde(rows[0], histories.get(rows[0].id)),
+    });
   } catch (error) {
     console.error('Get aspirasi by tiket error:', error);
     return res.status(500).json({ success: false, message: 'Gagal memuat aspirasi.' });
