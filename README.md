@@ -56,11 +56,13 @@ src/
 
 1. Nyalakan MySQL di XAMPP.
 2. Buka `http://localhost/phpmyadmin`.
-3. Pilih **Import** dan impor file `backend/schema.sql`. File ini membuat database `kaizenbox`, tabel `karyawan`, `aspirasi`, serta tiga akun sementara.
+3. Untuk database baru, pilih **Import** dan impor file `backend/schema.sql`. File ini membuat tabel `karyawan`, `admin`, `aspirasi`, dan `riwayat_status`, beserta tiga akun demo. `TEMP-RIZKY` menjadi admin.
 
-Untuk database lama, backend otomatis menambahkan kolom workflow yang belum ada saat `npm run server` dijalankan. Tabel dasar `karyawan` dan `aspirasi` tetap perlu dibuat satu kali dari `backend/schema.sql`; skrip `backend/migrate-aspirasi-workflow.sql` hanya diperlukan bila memakai versi backend lama tanpa migrasi otomatis. Penambahan akun karyawan tidak tersedia melalui aplikasi maupun API; halaman admin hanya menampilkan data dan mengubah role. Provisioning akun dilakukan melalui proses administrasi database yang tepercaya.
+Untuk database lama yang masih memakai `karyawan.role` dan `aspirasi.riwayat_status` JSON, backup database terlebih dahulu, lalu jalankan `backend/migrasi_admin.sql` dan `backend/migrasi_riwayat.sql`. Pastikan query pemeriksaan terakhir di migrasi riwayat tidak mengembalikan baris. Jangan jalankan baris `ALTER TABLE ... DROP COLUMN` yang masih berupa komentar sebelum hasil migrasi diverifikasi. Backend akan berhenti dengan pesan yang menunjuk schema atau migrasi apabila tabel baru belum tersedia; migrasi tabel admin dan riwayat tidak dijalankan otomatis. `backend/migrate-aspirasi-workflow.sql` adalah migrasi historis untuk versi backend lebih lama yang belum memiliki kolom-kolom workflow, bukan pengganti dua migrasi tersebut.
 
-Atur koneksi pada `.env` (salin dari `.env.example`): `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, dan `PORT`. Konfigurasi awal ditujukan untuk MySQL XAMPP lokal.
+Penambahan akun karyawan tidak tersedia melalui aplikasi maupun API; halaman admin hanya menampilkan data dan mengubah role. Provisioning akun dilakukan melalui proses administrasi database yang tepercaya.
+
+Atur koneksi backend pada `.env` (salin dari `.env.example`): `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, dan `PORT`. Konfigurasi awal ditujukan untuk MySQL XAMPP lokal. Untuk skrip password demo, environment variable koneksi harus sudah tersedia di proses shell; skrip tidak memuat `.env`.
 
 ## Menjalankan Aplikasi
 
@@ -107,20 +109,13 @@ Schema membuat akun sementara berikut. Kolom password sengaja `NULL`, sehingga a
 | `TEMP-AGUS` | Agus Setiawan | Karyawan |
 | `TEMP-DEWI` | Dewi Lestari | Karyawan |
 
-Buat hash bcrypt untuk password sementara melalui terminal folder proyek:
+Setelah impor schema, atur password demo dan verifikasi hasil hash melalui terminal folder proyek:
 
 ```powershell
-node -e "const bcrypt=require('bcryptjs'); bcrypt.hash('PasswordBaru-YangKuat!',12).then(console.log)"
+node scripts/set-demo-passwords.mjs
 ```
 
-Salin hash yang dihasilkan ke phpMyAdmin. Ganti hash dan ID karyawan sesuai akun:
-
-```sql
-UPDATE karyawan SET password = '$2b$12$PASTE_HASH_DI_SINI'
-WHERE id_karyawan = 'TEMP-RIZKY';
-```
-
-Login menggunakan ID karyawan dan password asli yang dipakai untuk membuat hash, bukan nilai hash. Akun contoh hanya untuk tes lokal; jangan gunakan password nyata. Password lama yang masih berupa teks biasa akan di-hash otomatis oleh backend setelah login berhasil, tetapi menetapkan hash bcrypt secara langsung lebih disarankan.
+Skrip mengatur password untuk ketiga ID demo di atas. Gunakan akun tersebut hanya untuk tes lokal, bukan data produksi. Password lama yang masih berupa teks biasa akan di-hash otomatis oleh backend setelah login berhasil.
 
 ## Endpoint Backend yang Tersedia
 
@@ -146,7 +141,7 @@ Semua endpoint kecuali `/api/health` dan `/api/login` memerlukan sesi. Endpoint 
 2. Admin memulai tinjauan; status berubah menjadi *Ditinjau*.
 3. Admin memilih tindak lanjut: implementasi, antre implementasi, riset, eskalasi keputusan, atau penolakan.
 4. Implementasi memakai PIC aktif dengan jabatan terisi selain `Operator` (dan bukan pengirim) serta tenggat. Aspirasi yang dijadwalkan dapat menunggu PIC sampai implementasi dimulai. Admin dapat mengganti PIC/tenggat selama antre atau implementasi, serta menyelesaikan atau membatalkan aspirasi dengan catatan.
-5. Perubahan status disimpan bersama riwayat status aspirasi.
+5. Perubahan status disimpan dalam tabel `riwayat_status` dan dikembalikan melalui field API `riwayatStatus`.
 
 Karyawan hanya melihat aspirasi miliknya. Admin dapat melihat semua aspirasi, tetapi aspirasi miliknya sendiri tidak ditampilkan pada antrean peninjauan.
 
