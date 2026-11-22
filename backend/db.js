@@ -38,7 +38,7 @@ export async function ensureSchema() {
   if (missingTables.length) {
     throw new Error(
       `Tabel ${missingTables.join(', ')} belum ada. Impor backend/schema.sql untuk database baru, `
-      + 'atau jalankan backend/migrasi_admin.sql dan backend/migrasi_riwayat.sql untuk database lama.'
+      + 'atau backup lalu jalankan `node scripts/migrate-kaizenbox.mjs` untuk migrasi database lama.'
     );
   }
 

@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "server": "node backend/index.js"
+    "server": "node backend/index.js",
+    "migrate:database": "node scripts/migrate-kaizenbox.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

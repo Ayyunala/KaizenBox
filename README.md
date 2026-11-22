@@ -56,9 +56,9 @@ src/
 
 1. Nyalakan MySQL di XAMPP.
 2. Buka `http://localhost/phpmyadmin`.
-3. Untuk database baru, pilih **Import** dan impor file `backend/schema.sql`. File ini membuat tabel `karyawan`, `admin`, `aspirasi`, dan `riwayat_status`, beserta tiga akun demo. `TEMP-RIZKY` menjadi admin.
+3. Gunakan satu database bernama `kaizenbox`. Untuk database baru, pilih **Import** dan impor file `backend/schema.sql`. File ini membuat tabel `karyawan`, `admin`, `aspirasi`, dan `riwayat_status`, beserta tiga akun demo. `TEMP-RIZKY` menjadi admin.
 
-Untuk database lama yang masih memakai `karyawan.role` dan `aspirasi.riwayat_status` JSON, backup database terlebih dahulu, lalu jalankan `backend/migrasi_admin.sql` dan `backend/migrasi_riwayat.sql`. Pastikan query pemeriksaan terakhir di migrasi riwayat tidak mengembalikan baris. Jangan jalankan baris `ALTER TABLE ... DROP COLUMN` yang masih berupa komentar sebelum hasil migrasi diverifikasi. Backend akan berhenti dengan pesan yang menunjuk schema atau migrasi apabila tabel baru belum tersedia; migrasi tabel admin dan riwayat tidak dijalankan otomatis. `backend/migrate-aspirasi-workflow.sql` adalah migrasi historis untuk versi backend lebih lama yang belum memiliki kolom-kolom workflow, bukan pengganti dua migrasi tersebut.
+Untuk database lama di XAMPP/MariaDB, backup database `kaizenbox` terlebih dahulu. Dari folder proyek, tinjau rencana migrasi tanpa mengubah data dengan `node scripts/migrate-kaizenbox.mjs --dry-run`, lalu jalankan `npm run migrate:database` untuk memigrasikan database yang sama. Skrip tidak membuat database kedua dan tidak menghapus kolom `karyawan.role` atau `aspirasi.riwayat_status`. Pastikan ringkasan migrasi menunjukkan semua aspirasi punya riwayat (`aspirationsWithoutHistory: 0`), lalu jalankan `npm run server`. Migrasi tabel tidak dijalankan otomatis saat backend dimulai. `backend/migrate-aspirasi-workflow.sql` adalah migrasi historis untuk versi backend yang lebih lama dan bukan bagian dari prosedur migrasi ini.
 
 Penambahan akun karyawan tidak tersedia melalui aplikasi maupun API; halaman admin hanya menampilkan data dan mengubah role. Provisioning akun dilakukan melalui proses administrasi database yang tepercaya.
 
