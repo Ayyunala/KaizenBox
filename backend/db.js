@@ -30,12 +30,16 @@ export async function testConnection() {
 export async function ensureSchema() {
   const [tables] = await db.execute(
     `SELECT TABLE_NAME FROM information_schema.TABLES
-     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('karyawan', 'aspirasi')`
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME IN ('karyawan', 'admin', 'aspirasi', 'riwayat_status')`
   );
   const existingTables = new Set(tables.map(row => row.TABLE_NAME));
-  const missingTables = ['karyawan', 'aspirasi'].filter(table => !existingTables.has(table));
+  const missingTables = ['karyawan', 'admin', 'aspirasi', 'riwayat_status'].filter(table => !existingTables.has(table));
   if (missingTables.length) {
-    throw new Error(`Tabel ${missingTables.join(', ')} belum ada. Impor backend/schema.sql terlebih dahulu.`);
+    throw new Error(
+      `Tabel ${missingTables.join(', ')} belum ada. Impor backend/schema.sql untuk database baru, `
+      + 'atau jalankan backend/migrasi_admin.sql dan backend/migrasi_riwayat.sql untuk database lama.'
+    );
   }
 
   const columnsToEnsure = {
@@ -53,7 +57,6 @@ export async function ensureSchema() {
     rekomendasi: "VARCHAR(30) NOT NULL DEFAULT 'implementasi'",
     reviewer_token: 'VARCHAR(40) NULL',
     pemutus_token: 'VARCHAR(40) NULL',
-    riwayat_status: 'JSON NULL',
   };
 
   const [columns] = await db.query('SHOW COLUMNS FROM aspirasi');
