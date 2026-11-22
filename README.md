@@ -12,7 +12,7 @@ KaizenBox memisahkan komponen UI, business service, dan API client. Frontend men
 - Dashboard admin adalah halaman awal setelah login, menggabungkan ringkasan statistik dengan tabel pengelolaan karyawan dan role.
 - Batas pengiriman adalah 10 aspirasi per karyawan per hari. Backend menjadi sumber nilai kuota dan menegakkannya dalam transaksi dengan mengunci baris akun agar pengiriman bersamaan tidak melewati batas.
 - PIC harus karyawan aktif dengan jabatan terisi selain `Operator`, dan bukan pengirim aspirasi. Aturan diperiksa pada frontend dan backend.
-- Audit log aktivitas sistem tidak digunakan. Riwayat perubahan status tetap tersimpan dan ditampilkan pada tiket.
+- Riwayat perubahan status tetap tersimpan dan ditampilkan pada tiket.
 - Menu **Aspirasi** menyatukan tab **Tinjauan**, **Keputusan**, dan **Semua**. Aspirasi yang ditinjau dapat langsung diimplementasikan, dijadwalkan, diriset, ditolak, atau dieskalasi ke antrean keputusan. Implementasi memerlukan PIC dan tenggat; aspirasi terjadwal boleh menunggu penunjukan PIC.
 - Ekspor CSV tetap tersedia sebagai aksi sekunder di tab **Semua** untuk mengunduh data seluruh aspirasi.
 
@@ -58,11 +58,11 @@ src/
 2. Buka `http://localhost/phpmyadmin`.
 3. Gunakan satu database bernama `kaizenbox`. Untuk database baru, pilih **Import** dan impor file `backend/schema.sql`. File ini membuat tabel `karyawan`, `admin`, `aspirasi`, dan `riwayat_status`, beserta tiga akun demo. `TEMP-RIZKY` menjadi admin.
 
-Untuk database lama di XAMPP/MariaDB, backup database `kaizenbox` terlebih dahulu. Dari folder proyek, tinjau rencana migrasi tanpa mengubah data dengan `node scripts/migrate-kaizenbox.mjs --dry-run`, lalu jalankan `npm run migrate:database` untuk memigrasikan database yang sama. Skrip tidak membuat database kedua dan tidak menghapus kolom `karyawan.role` atau `aspirasi.riwayat_status`. Pastikan ringkasan migrasi menunjukkan semua aspirasi punya riwayat (`aspirationsWithoutHistory: 0`), lalu jalankan `npm run server`. Migrasi tabel tidak dijalankan otomatis saat backend dimulai.
+Untuk database lama di XAMPP/MariaDB, backup database `kaizenbox` terlebih dahulu. Jika database berasal dari versi yang belum memiliki kolom workflow pada tabel `aspirasi`, jalankan `backend/migrate-aspirasi-workflow.sql` sekali; jangan jalankan jika kolom-kolom tersebut sudah ada. Setelah itu, dari folder proyek, tinjau rencana migrasi tanpa mengubah data dengan `node scripts/migrate-kaizenbox.mjs --dry-run`, lalu jalankan `npm run migrate:database` untuk memigrasikan database yang sama. Skrip migrasi Node tidak membuat database kedua dan tidak menghapus kolom `karyawan.role` atau `aspirasi.riwayat_status`. Pastikan ringkasan migrasi menunjukkan semua aspirasi punya riwayat (`aspirationsWithoutHistory: 0`), lalu jalankan `npm run server`. Migrasi tabel tidak dijalankan otomatis saat backend dimulai.
 
 Penambahan akun karyawan tidak tersedia melalui aplikasi maupun API; halaman admin hanya menampilkan data dan mengubah role. Provisioning akun dilakukan melalui proses administrasi database yang tepercaya.
 
-Atur koneksi backend pada `.env` (salin dari `.env.example`): `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, dan `PORT`. Konfigurasi awal ditujukan untuk MySQL XAMPP lokal. Untuk skrip password demo, environment variable koneksi harus sudah tersedia di proses shell; skrip tidak memuat `.env`.
+Atur koneksi backend pada `.env` (salin dari `.env.example`): `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, dan `PORT`. Konfigurasi awal ditujukan untuk MySQL XAMPP lokal. Skrip migrasi memuat `.env` secara otomatis. Untuk skrip password demo, environment variable koneksi harus sudah tersedia di proses shell; skrip tidak memuat `.env`.
 
 ## Menjalankan Aplikasi
 
